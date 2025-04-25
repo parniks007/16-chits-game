@@ -1,0 +1,160 @@
+import PySimpleGUI as sg
+import random
+import time
+
+class ChitsGame:
+    def __init__(self):
+        self.players = {1: [], 2: [], 3: [], 4: []}
+        self.current_player = 1
+        self.all_chits = ['🍎', '🍌', '🍊', '🥝'] * 4  # 16 chits
+        self.selected_chit = None
+        self.game_state = 'playing'  # 'playing', 'victory', 'reaction'
+        self.reaction_times = {}
+        self.reaction_start_time = None
+        self.victory_player = None
+        self.reaction_player = None
+
+        layout = [
+            [sg.Text("🎯 16 Chits Game", font=("Helvetica", 20))],
+            [sg.Text(f"Player {self.current_player}'s turn. Select a chit to pass.", key='-TURN-TEXT-', font=("Helvetica", 14))],
+            [self._build_chits_frame()],
+            [self._build_action_buttons_frame()]
+        ]
+        
+        self._window = sg.Window("16 Chits Game (Local)", layout, finalize=True)
+        self._new_game()
+
+    def _build_chits_frame(self):
+        self._chits_buttons = [
+            sg.Button('', size=(4, 2), key=f'-CHIT-{i}-', visible=False) for i in range(5)  # Max 5 chits possible
+        ]
+        return sg.Column([[btn for btn in self._chits_buttons]], key='-CHITS-FRAME-')
+
+    def _build_action_buttons_frame(self):
+        return sg.Column([
+            [
+                sg.Button("Declare Victory", key='-VICTORY-', visible=True),
+                sg.Button("Next Turn", key='-NEXT-', visible=True),
+                sg.Button("Exit", key='-EXIT-')
+            ],
+            [sg.Button("Stack Hand", key='-STACK-', visible=False), sg.Button("Next Turn", key='-NEXT-REACTION-', visible=False)]
+        ])
+
+    def _new_game(self):
+        random.shuffle(self.all_chits)
+        self.players = {1: [], 2: [], 3: [], 4: []}
+        for i in range(4):
+            self.players[i + 1] = self.all_chits[i * 4:(i + 1) * 4]
+        self.current_player = 1
+        self.game_state = 'playing'
+        self.selected_chit = None
+        self.reaction_times = {}
+        self.victory_player = None
+        self.reaction_player = None
+        self._window['-TURN-TEXT-'].update(f"Player {self.current_player}'s turn. Select a chit to pass.")
+        self._window['-VICTORY-'].update(visible=True)
+        self._window['-NEXT-'].update(visible=True)
+        self._window['-STACK-'].update(visible=False)
+        self._window['-NEXT-REACTION-'].update(visible=False)
+        self.update_chits_display()
+
+    def update_chits_display(self):
+        for btn in self._chits_buttons:
+            btn.update(visible=False)
+        if self.game_state == 'playing' and self.current_player:
+            player_chits = self.players[self.current_player]
+            for i, chit in enumerate(player_chits):
+                self._chits_buttons[i].update(text=chit, visible=True)
+            self._window['-TURN-TEXT-'].update(f"Player {self.current_player}'s turn. Select a chit to pass.")
+        elif self.game_state == 'reaction':
+            self._window['-TURN-TEXT-'].update(f"Player {self.reaction_player}, tap to stack your hand!")
+            self._window['-VICTORY-'].update(visible=False)
+            self._window['-NEXT-'].update(visible=False)
+            self._window['-STACK-'].update(visible=True)
+            self._window['-NEXT-REACTION-'].update(visible=False)
+
+    def read_event(self):
+        event, _ = self._window.read()
+        return event
+
+    def process_event(self, event):
+        if event == sg.WIN_CLOSED or event == '-EXIT-':
+            return False
+
+        if self.game_state == 'playing':
+            if event.startswith('-CHIT-'):
+                index = int(event.split('-')[2])
+                player_chits = self.players[self.current_player]
+                if index < len(player_chits):
+                    self.selected_chit = player_chits[index]
+
+            elif event == '-NEXT-':
+                if self.selected_chit:
+                    self.pass_chit()
+                    self.current_player = (self.current_player % 4) + 1
+                    self._window['-TURN-TEXT-'].update(f"Player {self.current_player}'s turn. Select a chit to pass.")
+                    self.update_chits_display()
+                    self.selected_chit = None
+                else:
+                    self._window['-TURN-TEXT-'].update(f"Player {self.current_player}, please select a chit to pass.")
+
+            elif event == '-VICTORY-':
+                if self.check_victory():
+                    self.victory_player = self.current_player
+                    self.game_state = 'reaction'
+                    self.reaction_player = (self.current_player % 4) + 1
+                    self.reaction_times = {}
+                    self.reaction_start_time = time.time()
+                    self.update_chits_display()
+
+        elif self.game_state == 'reaction':
+            if event == '-STACK-':
+                reaction_time = time.time() - self.reaction_start_time
+                self.reaction_times[self.reaction_player] = reaction_time
+                self._window['-STACK-'].update(visible=False)
+                self._chits_buttons[0].update(text="✋", visible=True)  # Show hand in chits frame
+                self._window['-NEXT-REACTION-'].update(visible=True)  # Show Next Turn option
+
+            elif event == '-NEXT-REACTION-':
+                self._chits_buttons[0].update(visible=False)  # Hide hand
+                next_player = (self.reaction_player % 4) + 1
+                if next_player == self.victory_player:
+                    next_player = (next_player % 4) + 1
+                if len(self.reaction_times) < 3:  # 3 other players need to react
+                    self.reaction_player = next_player
+                    self.reaction_start_time = time.time()
+                    self._window['-NEXT-REACTION-'].update(visible=False)
+                    self.update_chits_display()
+                else:
+                    self.end_game()
+
+        return True
+
+    def pass_chit(self):
+        next_player = (self.current_player % 4) + 1
+        self.players[self.current_player].remove(self.selected_chit)
+        self.players[next_player].append(self.selected_chit)
+
+    def check_victory(self):
+        player_chits = self.players[self.current_player]
+        counts = {}
+        for chit in player_chits:
+            counts[chit] = counts.get(chit, 0) + 1
+        return any(count >= 4 for count in counts.values())
+
+    def end_game(self):
+        slowest_player = max(self.reaction_times, key=self.reaction_times.get)
+        sg.popup(f"Player {self.victory_player} won! 🎉\nPlayer {slowest_player} was slowest to react and starts next round!", title="Game Over")
+        self.current_player = slowest_player  # Slowest player starts next round
+        self._new_game()
+
+    def close(self):
+        self._window.close()
+
+if __name__ == "__main__":
+    game = ChitsGame()
+    running = True
+    while running:
+        event = game.read_event()
+        running = game.process_event(event)
+    game.close()
