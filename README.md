@@ -3,8 +3,8 @@
 Welcome to the 16 Chits Game, a fun and interactive multiplayer card game implemented in Python using PySimpleGUI! This project recreates a classic chit-passing game where 4 players compete to collect 4 identical chits, with an exciting twist on victory declaration and reaction timing.
 
 Features:
-Multiplayer Fun: Designed for 4 players who pass a single device (or can be adapted for online play).
-Chit Selection: Players see their 4 chits as clickable buttons during their turn, selecting one to pass to the next player.
+1. Multiplayer Fun: Designed for 4 players who pass a single device (or can be adapted for online play).
+2. Chit Selection: Players see their 4 chits as clickable buttons during their turn, selecting one to pass to the next player.
 Victory Detection: Declare victory when you have 4 matching chits, even if you hold extra chits.
 Reaction Challenge: After a player wins, others must react by tapping a "Stack Hand" button in sequence, with reaction times recorded. The slowest player starts the next round.
 Dynamic UI: Chits are hidden except during a player's turn, and a hand emoji (✋) appears after stacking, followed by a "Next Turn" option for smooth device passing.
