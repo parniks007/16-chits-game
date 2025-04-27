@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>16 Chits Game</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.js"></script>
+    <style>
+        body { background-color: #f0f0f0; }
+        .chit-button { transition: background-color 0.3s; }
+        .chit-button:hover { background-color: #d1d5db; }
+    </style>
+</head>
+<body class="flex flex-col items-center justify-center min-h-screen p-4">
+    <div id="game-container" class="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
+        <h1 class="text-2xl font-bold text-center mb-4">🎯 16 Chits Game</h1>
+        <div id="room-section" class="mb-4">
+            <button id="join-room" class="bg-blue-500 text-white p-2 rounded w-full mb-2">Join Room</button>
+            <button id="create-room" class="bg-green-500 text-white p-2 rounded w-full">Create Room</button>
+        </div>
+        <div id="form-section" class="hidden mb-4">
+            <input id="player-name" type="text" placeholder="Enter your name" class="border p-2 rounded w-full mb-2">
+            <input id="room-code" type="text" placeholder="Enter 4-digit room number" class="border p-2 rounded w-full mb-2" maxlength="4">
+            <button id="submit-form" class="bg-indigo-500 text-white p-2 rounded w-full">Submit</button>
+            <p id="error-message" class="text-red-500 hidden mt-2"></p>
+        </div>
+        <div id="game-section" class="hidden">
+            <p id="turn-text" class="text-lg font-semibold mb-4 text-center"></p>
+            <div id="chits-frame" class="flex flex-wrap justify-center gap-2 mb-4"></div>
+            <div id="hand-display" class="text-2xl text-center mb-4 hidden"></div>
+            <div id="leaderboard-frame" class="hidden mb-4 text-center"></div>
+            <div id="game-buttons" class="flex flex-col gap-2">
+                <button id="declare-victory" class="bg-yellow-500 text-white p-2 rounded hidden">Declare Victory</button>
+                <button id="stack-hand" class="bg-red-500 text-white p-2 rounded hidden">Stack Hand</button>
+                <button id="new-game" class="bg-green-500 text-white p-2 rounded hidden">New Game</button>
+                <button id="end-game" class="bg-red-500 text-white p-2 rounded hidden">End Game</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io('http://localhost:5000');
+        let playerName = null;
+        let roomCode = null;
+        let firstTurnTaken = false;
+
+        const roomSection = document.getElementById('room-section');
+        const formSection = document.getElementById('form-section');
+        const gameSection = document.getElementById('game-section');
+        const playerNameInput = document.getElementById('player-name');
+        const roomCodeInput = document.getElementById('room-code');
+        const submitFormBtn = document.getElementById('submit-form');
+        const errorMessage = document.getElementById('error-message');
+        const turnText = document.getElementById('turn-text');
+        const chitsFrame = document.getElementById('chits-frame');
+        const handDisplay = document.getElementById('hand-display');
+        const leaderboardFrame = document.getElementById('leaderboard-frame');
+        const declareVictoryBtn = document.getElementById('declare-victory');
+        const stackHandBtn = document.getElementById('stack-hand');
+        const newGameBtn = document.getElementById('new-game');
+        const endGameBtn = document.getElementById('end-game');
+
+        document.getElementById('join-room').addEventListener('click', () => {
+            roomSection.classList.add('hidden');
+            formSection.classList.remove('hidden');
+            submitFormBtn.onclick = joinRoom;
+        });
+
+        document.getElementById('create-room').addEventListener('click', () => {
+            roomSection.classList.add('hidden');
+            formSection.classList.remove('hidden');
+            submitFormBtn.onclick = createRoom;
+        });
+
+        function validateForm() {
+            const name = playerNameInput.value.trim();
+            const code = roomCodeInput.value.trim();
+            if (!name) {
+                errorMessage.textContent = 'Please enter a name!';
+                errorMessage.classList.remove('hidden');
+                return false;
+            }
+            if (!code || !/^\d{4}$/.test(code)) {
+                errorMessage.textContent = 'Please enter a 4-digit room number!';
+                errorMessage.classList.remove('hidden');
+                return false;
+            }
+            errorMessage.classList.add('hidden');
+            return { name, code };
+        }
+
+        function createRoom() {
+            const data = validateForm();
+            if (data) {
+                playerName = data.name;
+                roomCode = data.code;
+                console.log(`Sending create_room with name: ${playerName}, room: ${roomCode}`);
+                socket.emit('create_room', { player_name: playerName, room_code: roomCode });
+            }
+        }
+
+        function joinRoom() {
+            const data = validateForm();
+            if (data) {
+                playerName = data.name;
+                roomCode = data.code;
+                console.log(`Sending join_room with name: ${playerName}, room: ${roomCode}`);
+                socket.emit('join_room', { player_name: playerName, room_code: roomCode });
+            }
+        }
+
+        socket.on('room_joined', (data) => {
+            playerName = data.player_name;
+            roomCode = data.room_code;
+            formSection.classList.add('hidden');
+            gameSection.classList.remove('hidden');
+            console.log(`Joined room ${roomCode} as ${playerName}`);
+            updateUI(data);
+        });
+
+        socket.on('room_error', (data) => {
+            errorMessage.textContent = data.message;
+            errorMessage.classList.remove('hidden');
+        });
+
+        socket.on('update_game', (data) => {
+            console.log("Received update_game:", data);
+            updateUI(data);
+        });
+
+        socket.on('game_over', (data) => {
+            console.log("Game over:", data);
+            displayLeaderboard(data);
+        });
+
+        socket.on('final_results', (data) => {
+            console.log("Final results:", data);
+            displayFinalResults(data);
+        });
+
+        function updateUI(data) {
+            const { current_player, players, game_state, victory_player } = data;
+            const playerChits = players[playerName] || [];
+            const playerCount = Object.keys(players).length;
+            const requiredPlayers = 4;
+
+            // Clear previous UI elements
+            declareVictoryBtn.classList.add('hidden');
+            stackHandBtn.classList.add('hidden');
+            newGameBtn.classList.add('hidden');
+            endGameBtn.classList.add('hidden');
+            leaderboardFrame.classList.add('hidden');
+            handDisplay.classList.add('hidden');
+
+            if (game_state === 'waiting') {
+                const remainingPlayers = requiredPlayers - playerCount;
+                turnText.textContent = remainingPlayers > 0
+                    ? `Waiting for ${remainingPlayers} more player${remainingPlayers > 1 ? 's' : ''}...`
+                    : 'Waiting for game to start...'; // Shouldn't occur, but as a fallback
+                chitsFrame.innerHTML = '';
+            } else if (game_state === 'playing') {
+                if (!firstTurnTaken) {
+                    turnText.textContent = `Game started! It's ${current_player}'s turn.`;
+                    displayChits(playerChits);
+                    if (current_player === playerName) {
+                        declareVictoryBtn.classList.remove('hidden');
+                    }
+                } else {
+                    turnText.textContent = current_player === playerName
+                        ? "Your turn to pass the chit."
+                        : `${current_player}'s turn.`;
+                    displayChits(playerChits);
+                    if (current_player === playerName) {
+                        declareVictoryBtn.classList.remove('hidden');
+                    }
+                }
+            } else if (game_state === 'reaction') {
+                // Clear chits and buttons for all players
+                chitsFrame.innerHTML = '';
+                turnText.textContent = `Victory declared by ${victory_player}! Tap to stack your hand!`;
+                if (playerName !== victory_player) {
+                    stackHandBtn.classList.remove('hidden');
+                }
+            }
+        }
+
+        function displayChits(chits) {
+            chitsFrame.innerHTML = '';
+            chits.forEach((chit, index) => {
+                const btn = document.createElement('button');
+                btn.textContent = chit;
+                btn.className = 'chit-button bg-gray-200 p-2 rounded';
+                btn.addEventListener('click', () => {
+                    console.log(`${playerName} selecting chit: ${chit}`);
+                    socket.emit('select_chit', { room_code: roomCode, player_name: playerName, chit });
+                    firstTurnTaken = true; // Set flag when first turn is taken
+                });
+                chitsFrame.appendChild(btn);
+            });
+        }
+
+        function displayLeaderboard(data) {
+            const { winner, slowest_player, scores, round_number } = data;
+
+            // Clear the game UI
+            chitsFrame.innerHTML = '';
+            turnText.textContent = `Round ${round_number} Results`;
+            declareVictoryBtn.classList.add('hidden');
+            stackHandBtn.classList.add('hidden');
+
+            // Build the leaderboard with total scores and winner/loser
+            let leaderboardHTML = '<h2 class="text-lg font-bold mb-2">Results</h2>';
+            leaderboardHTML += `<p>Winner: ${winner}</p>`;
+            leaderboardHTML += `<p>Loser: ${slowest_player || 'N/A'}</p>`;
+            leaderboardHTML += '<p>Total Scores:</p>';
+            leaderboardHTML += '<ul>';
+            for (const [player, score] of Object.entries(scores)) {
+                leaderboardHTML += `<li>${player}: ${score} points</li>`;
+            }
+            leaderboardHTML += '</ul>';
+
+            leaderboardFrame.innerHTML = leaderboardHTML;
+            leaderboardFrame.classList.remove('hidden');
+
+            // Show New Game and End Game buttons
+            newGameBtn.classList.remove('hidden');
+            endGameBtn.classList.remove('hidden');
+        }
+
+        function displayFinalResults(data) {
+            const { scores, final_winner, final_loser } = data;
+
+            // Clear the game UI
+            chitsFrame.innerHTML = '';
+            turnText.textContent = 'Final Results';
+            declareVictoryBtn.classList.add('hidden');
+            stackHandBtn.classList.add('hidden');
+            newGameBtn.classList.add('hidden');
+            endGameBtn.classList.add('hidden');
+
+            // Build the final leaderboard
+            let leaderboardHTML = '<h2 class="text-lg font-bold mb-2">Final Results</h2>';
+            leaderboardHTML += `<p>Overall Winner: ${final_winner} 🎉</p>`;
+            leaderboardHTML += `<p>Overall Loser: ${final_loser || 'N/A'}</p>`;
+            leaderboardHTML += '<p>Final Scores:</p>';
+            leaderboardHTML += '<ul>';
+            for (const [player, score] of Object.entries(scores)) {
+                leaderboardHTML += `<li>${player}: ${score} points</li>`;
+            }
+            leaderboardHTML += '</ul>';
+
+            leaderboardFrame.innerHTML = leaderboardHTML;
+            leaderboardFrame.classList.remove('hidden');
+        }
+
+        declareVictoryBtn.addEventListener('click', () => {
+            socket.emit('declare_victory', { room_code: roomCode, player_name: playerName });
+        });
+
+        stackHandBtn.addEventListener('click', () => {
+            const reactionTime = Date.now();
+            socket.emit('stack_hand', { room_code: roomCode, player_name: playerName, reaction_time: reactionTime });
+            stackHandBtn.classList.add('hidden');
+            chitsFrame.innerHTML = '<div class="text-2xl">✋</div>';
+        });
+
+        newGameBtn.addEventListener('click', () => {
+            socket.emit('restart_game', { room_code: roomCode });
+            firstTurnTaken = false; // Reset flag for new game
+        });
+
+        endGameBtn.addEventListener('click', () => {
+            socket.emit('end_game', { room_code: roomCode });
+        });
+    </script>
+</body>
+</html>
